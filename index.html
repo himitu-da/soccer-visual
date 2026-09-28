@@ -105,8 +105,17 @@
     font-weight: 500;
   }
   .card .num span, .card .name span { display: inline-block; transform-origin: center; }
-  .card.selected { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .card.selected {
+    outline: 3px solid var(--accent); outline-offset: 1px;
+    animation: jiggle .28s ease-in-out infinite; /* iPhoneのホーム画面風の揺れ */
+  }
+  @keyframes jiggle {
+    0%, 100% { transform: rotate(-1.5deg); }
+    50%      { transform: rotate(1.5deg) translateY(-.5px); }
+  }
   .card.dragging { opacity: .3; }
+  .card.flying { position: fixed; z-index: 900; pointer-events: none; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
+  @media (prefers-reduced-motion: reduce) { .card.selected { animation: none; } }
   .card.ghost {
     position: fixed; z-index: 1000; pointer-events: none;
     transform: translate(-50%, -50%) scale(1.08);
@@ -480,7 +489,47 @@
 
   const sameSrc = (a, b) => a && b && a.type === b.type && (a.type === 'slot' ? a.i === b.i : a.pid === b.pid);
 
-  function applyMove(src, tgt) {
+  // ---------- 移動アニメーション ----------
+  // 変更前のカード位置を記録 → 再描画 → 新しい位置との差分を複製カードで飛ばす（FLIP）
+  const MOVE_MS = 340;
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const allCards = () => document.querySelectorAll('#slots .card, #benchList .card');
+
+  function snapshot() {
+    const m = new Map();
+    allCards().forEach((c) => m.set(c.dataset.pid, c.getBoundingClientRect()));
+    return m;
+  }
+
+  function animateFrom(before) {
+    if (reduceMotion.matches) return;
+    allCards().forEach((card) => {
+      const from = before.get(card.dataset.pid);
+      if (!from) return;
+      const to = card.getBoundingClientRect();
+      const dx = from.left - to.left, dy = from.top - to.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      // ピッチ・控えはそれぞれ枠外を隠すので、画面最前面に複製を置いて動かす
+      const fly = card.cloneNode(true);
+      fly.className = 'card flying';
+      Object.assign(fly.style, { left: to.left + 'px', top: to.top + 'px' });
+      document.body.appendChild(fly);
+      card.style.visibility = 'hidden';
+      const a = fly.animate([
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: `translate(${dx / 2}px, ${dy / 2}px) scale(1.08)`, offset: 0.5 },
+        { transform: 'none' },
+      ], { duration: MOVE_MS, easing: 'cubic-bezier(.3,.7,.2,1)' });
+      const done = () => { fly.remove(); card.style.visibility = ''; };
+      a.onfinish = done;
+      a.oncancel = done;
+    });
+  }
+
+  // override: 特定カードの開始位置を上書き（ドラッグ時は指の位置から飛ばす）
+  function applyMove(src, tgt, override) {
+    const before = snapshot();
+    override?.forEach((r, pid) => before.set(pid, r));
     const L = state.lineup;
     let changed = false;
     if (src.type === 'slot') {
@@ -494,7 +543,8 @@
     } else if (tgt.type === 'slot') {
       L[tgt.i] = src.pid; changed = true;   // 控えから投入（元の選手は控えへ）
     }
-    if (changed) { save(); render(); }
+    if (changed) { save(); render(); animateFrom(before); }
+    return changed;
   }
 
   // ---------- タップ選択 ----------
@@ -570,8 +620,11 @@
     if (drag) {
       const src = drag.src;
       const tgt = targetOf(document.elementFromPoint(e.clientX, e.clientY));
+      // 指を離した位置（ゴーストの中心）を、ドラッグしたカードの開始位置にする
+      const g = drag.ghost.getBoundingClientRect(), r = drag.card.getBoundingClientRect();
+      const from = new Map([[src.pid, { left: g.left + g.width / 2 - r.width / 2, top: g.top + g.height / 2 - r.height / 2 }]]);
       endDrag();
-      if (tgt) applyMove(src, tgt);
+      if (!(tgt && applyMove(src, tgt, from))) animateFrom(from); // 無効な場所なら元の位置へ戻る
     } else {
       handleTap(e.target);
     }
@@ -589,7 +642,8 @@
   formationSel.addEventListener('change', () => {
     state.formation = formationSel.value;
     select(null);
-    save(); render();
+    const before = snapshot();
+    save(); render(); animateFrom(before);
   });
 
   // ---------- 選手管理 ----------

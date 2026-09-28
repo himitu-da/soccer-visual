@@ -2,7 +2,7 @@
 // 電波がなくてもキャッシュから表示する。
 // 表示はキャッシュを優先し、裏で最新版を取得して次回起動時に反映する。
 // ※ アプリを更新したら CACHE の番号を上げる
-const CACHE = 'soccer-visual-v1';
+const CACHE = 'soccer-visual-v2';
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
