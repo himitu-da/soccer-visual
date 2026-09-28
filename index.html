@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Soccer Visual">
+<meta name="theme-color" content="#0e2a17">
+<title>Soccer Visual</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cw: 160px;            /* カード幅（JSで更新） */
+    --ch: calc(var(--cw) / 6); /* カード高さ = 幅の1/6（JSで更新） */
+    --accent: #ffd400;
+    --ui-bg: #0a1f12;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  html, body {
+    height: 100%;
+    background: #0e2a17;
+    color: #fff;
+    font-family: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  body {
+    display: flex; flex-direction: column;
+    height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* ---------- 操作ボタン（控えエリアの上） ---------- */
+  .controls {
+    flex: none; margin-bottom: 12px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  }
+  .controls select { grid-column: 1 / -1; }
+  #main.portrait .controls { grid-template-columns: auto auto auto; justify-content: end; }
+  #main.portrait .controls select { grid-column: auto; }
+  .controls select, .controls button, .fs-exit {
+    font: inherit; font-size: 13px; color: #fff;
+    background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 6px;
+    height: 34px; padding: 0 10px; min-width: 0;
+    white-space: nowrap;
+  }
+  .controls select { -webkit-appearance: none; appearance: none; padding-right: 26px;
+    background-image: linear-gradient(45deg, transparent 50%, #fff 50%), linear-gradient(135deg, #fff 50%, transparent 50%);
+    background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px;
+    background-size: 5px 5px; background-repeat: no-repeat; }
+  .controls button:active, .fs-exit:active { background: rgba(255,255,255,.25); }
+
+  /* ---------- コートのみ全画面 ---------- */
+  body.court-only #bench { display: none; }
+  .fs-exit {
+    position: absolute; top: 8px; right: 8px; z-index: 5;
+    background: rgba(0,0,0,.35); border-color: rgba(255,255,255,.25);
+    opacity: .7;
+  }
+  body:not(.court-only) .fs-exit { display: none; }
+
+  /* ---------- メイン ---------- */
+  #main { flex: 1; min-height: 0; display: flex; }
+  #main.portrait { flex-direction: column; }
+  #pitch { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+  #pitchSvg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #slots { position: absolute; inset: 0; }
+  .slot {
+    position: absolute;
+    width: var(--cw); height: var(--ch);
+    transform: translate(-50%, -50%);
+  }
+
+  /* ---------- 選手カード ---------- */
+  .card {
+    display: flex;
+    width: var(--cw); height: var(--ch);
+    background: #fff; color: #000;
+    font-size: calc(var(--ch) * .6);
+    line-height: 1;
+    white-space: nowrap;
+    touch-action: none;
+    cursor: grab;
+    box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  }
+  .card .num {
+    flex: none; width: var(--ch); /* 背番号エリア = 横1/6 = 高さと同じ */
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .card .name {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 500;
+  }
+  .card .num span, .card .name span { display: inline-block; transform-origin: center; }
+  .card.selected { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .card.dragging { opacity: .3; }
+  .card.ghost {
+    position: fixed; z-index: 1000; pointer-events: none;
+    transform: translate(-50%, -50%) scale(1.08);
+    box-shadow: 0 8px 20px rgba(0,0,0,.45);
+  }
+
+  /* 空きポジション */
+  .ph {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    border: 1.5px dashed rgba(255,255,255,.75);
+    background: rgba(0,0,0,.18);
+    color: rgba(255,255,255,.9);
+    font-size: calc(var(--ch) * .5); font-weight: 700; letter-spacing: .08em;
+  }
+
+  /* 選択中・ドラッグ中の移動先ヒント */
+  body.has-selection .slot .card:not(.selected),
+  body.has-selection .ph,
+  body.sel-slot #benchList .card {
+    outline: 2px dashed rgba(255,212,0,.7); outline-offset: 2px;
+  }
+  .drop-hover > .card, .drop-hover > .ph, .card.drop-hover {
+    outline: 3px solid var(--accent) !important; outline-offset: 2px;
+  }
+  #bench.drop-hover { background: rgba(60,50,0,.92); }
+
+  /* ---------- 控え ---------- */
+  #bench {
+    flex: none;
+    display: flex; flex-direction: column;
+    padding: 10px;
+    background: rgba(5,20,10,.94);
+    border-left: 1px solid rgba(255,255,255,.08);
+    transition: background .15s;
+  }
+  #main.portrait #bench { border-left: 0; border-top: 1px solid rgba(255,255,255,.08); }
+  .bench-head {
+    flex: none; height: 18px; margin-bottom: 8px;
+    font-size: 13px; font-weight: 700; letter-spacing: .1em;
+    color: rgba(255,255,255,.75);
+  }
+  #benchList {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: grid; grid-template-columns: repeat(auto-fill, var(--cw));
+    gap: 6px 8px; align-content: start;
+  }
+  .bench-empty { font-size: 12px; color: rgba(255,255,255,.45); }
+
+  /* ---------- 選手管理モーダル ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sheet {
+    width: min(640px, 94vw); max-height: 86dvh;
+    display: flex; flex-direction: column;
+    background: #fff; color: #111;
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0,0,0,.4);
+  }
+  .sheet-head { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid #e5e5e5; }
+  .sheet-head h2 { font-size: 17px; font-weight: 700; margin-right: auto; }
+  .sheet button {
+    font: inherit; font-size: 15px;
+    height: 38px; padding: 0 16px; border-radius: 8px;
+    border: 1px solid #d0d0d0; background: #f5f5f5; color: #111;
+  }
+  .sheet button.primary { background: #111; color: #fff; border-color: #111; }
+  .sheet button.danger { color: #c62828; background: #fff; border-color: #f0c4c4; height: 36px; padding: 0 12px; }
+  .r-cols, .r-row { display: grid; grid-template-columns: 72px 1fr 64px 64px; gap: 8px; align-items: center; }
+  .r-cols { padding: 8px 16px; font-size: 12px; color: #777; border-bottom: 1px solid #eee; }
+  #rosterList { overflow-y: auto; padding: 4px 16px; }
+  .r-row { padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+  .r-row input {
+    font: inherit; font-size: 16px; /* 16px未満だとiOSがズームする */
+    height: 38px; padding: 0 10px; width: 100%;
+    border: 1px solid #d0d0d0; border-radius: 6px; color: #111;
+    -webkit-user-select: text; user-select: text;
+  }
+  .r-row .r-num { text-align: center; }
+  .r-status { font-size: 12px; color: #666; text-align: center; }
+  .r-status.on { color: #1b5e20; font-weight: 700; }
+  .sheet-foot { padding: 12px 16px; border-top: 1px solid #e5e5e5; }
+</style>
+</head>
+<body>
+  <main id="main">
+    <div id="pitch">
+      <svg id="pitchSvg"></svg>
+      <div id="slots"></div>
+      <button id="btnExitFull" class="fs-exit">全画面を終了</button>
+    </div>
+    <section id="bench" data-drop="bench">
+      <div class="controls" id="controls">
+        <select id="formation" aria-label="フォーメーション"></select>
+        <button id="btnRoster">選手管理</button>
+        <button id="btnFull">全画面</button>
+      </div>
+      <div class="bench-head">控え <span id="benchCount"></span></div>
+      <div id="benchList"></div>
+    </section>
+  </main>
+
+  <div id="rosterModal" class="modal" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>選手管理</h2>
+        <button id="rosterDone" class="primary">完了</button>
+      </div>
+      <div class="r-cols"><span>背番号</span><span>名前</span><span>状態</span><span></span></div>
+      <div id="rosterList"></div>
+      <div class="sheet-foot"><button id="rosterAdd">＋ 選手を追加</button></div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'soccerVisual.v2';
+  const CARD_RATIO_LANDSCAPE = 0.16; // 横向き時: カード幅 = ピッチ幅 × この値
+  const CARD_RATIO_PORTRAIT = 0.19;  // 縦向き時: カード幅 = ピッチ幅 × この値
+  const NAME_FIT = 0.9;              // 名前が枠のこの割合を超えたら横に縮める
+  const CARD_ASPECT = 6;             // カード比率 縦1：横6（うち横1が背番号）
+  const BENCH_PAD = 10, BENCH_HEAD = 26, BENCH_MIN_W = 150, GAP_X = 8, GAP_Y = 6;
+
+  // ポジション定義: [ラベル, x(左0→右100), y(自陣ゴール0→相手ゴール100)]
+  const DF4 = [['LB', 0, 24], ['CB', 33, 20], ['CB', 67, 20], ['RB', 100, 24]];
+  const CB3 = [['CB', 20, 22], ['CB', 50, 20], ['CB', 80, 22]];
+  const GK = ['GK', 50, 0];
+  const FORMATIONS = {
+    '4-4-2':   [GK, ...DF4, ['LM', 0, 56], ['CM', 33, 50], ['CM', 67, 50], ['RM', 100, 56], ['FW', 30, 90], ['FW', 70, 90]],
+    '4-3-3':   [GK, ...DF4, ['CM', 18, 50], ['DM', 50, 44], ['CM', 82, 50], ['LW', 5, 86], ['CF', 50, 92], ['RW', 95, 86]],
+    '4-2-3-1': [GK, ...DF4, ['DM', 30, 44], ['DM', 70, 44], ['LM', 4, 68], ['AM', 50, 68], ['RM', 96, 68], ['CF', 50, 93]],
+    '4-1-4-1': [GK, ...DF4, ['DM', 50, 42], ['LM', 0, 66], ['CM', 33, 63], ['CM', 67, 63], ['RM', 100, 66], ['CF', 50, 92]],
+    '3-5-2':   [GK, ...CB3, ['LWB', 0, 54], ['CM', 25, 48], ['DM', 50, 42], ['CM', 75, 48], ['RWB', 100, 54], ['FW', 30, 90], ['FW', 70, 90]],
+    '3-4-3':   [GK, ...CB3, ['LM', 0, 54], ['CM', 33, 48], ['CM', 67, 48], ['RM', 100, 54], ['LW', 8, 86], ['CF', 50, 92], ['RW', 92, 86]],
+    '3-4-2-1': [GK, ...CB3, ['LWB', 0, 52], ['CM', 33, 46], ['CM', 67, 46], ['RWB', 100, 52], ['SH', 28, 72], ['SH', 72, 72], ['CF', 50, 92]],
+    '5-3-2':   [GK, ['LWB', 0, 32], ['CB', 25, 20], ['CB', 50, 18], ['CB', 75, 20], ['RWB', 100, 32], ['CM', 20, 54], ['CM', 50, 50], ['CM', 80, 54], ['FW', 30, 90], ['FW', 70, 90]],
+  };
+
+  const $ = (s) => document.querySelector(s);
+  const root = document.documentElement;
+  const mainEl = $('#main'), pitchEl = $('#pitch'), svgEl = $('#pitchSvg'), slotsEl = $('#slots');
+  const benchEl = $('#bench'), benchList = $('#benchList'), benchCount = $('#benchCount');
+  const formationSel = $('#formation');
+  const modal = $('#rosterModal'), rosterList = $('#rosterList');
+
+  const uid = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+  // ---------- 状態と保存 ----------
+  function defaultState() {
+    // 日本代表 2026/9/28 キリンチャレンジカップ vs ベネズエラ
+    // 先頭11人は 3-4-2-1 の並び順（GK, CB左→右, WB左, CM, CM, WB右, シャドー左, 右, CF）
+    const sample = [
+      [12, '小久保 玲央ブライアン'],
+      [25, '鈴木 淳之介'], [5, '渡辺 剛'], [3, '瀬古 歩夢'],
+      [7, '相馬 勇紀'], [15, '鎌田 大地'], [30, '熊坂 光希'], [2, '中野 就斗'],
+      [29, '齋藤 俊輔'], [27, '佐藤 龍之介'], [9, '後藤 啓介'],
+      // 控え
+      [23, '早川 友基'], [1, '鈴木 彩艶'], [21, '伊藤 洋輝'], [14, '伊東 純也'], [11, '前田 大然'],
+      [31, '谷村 海那'], [10, '堂安 律'], [18, '上田 綺世'], [17, '田中 碧'], [13, '中村 敬斗'],
+      [24, '佐野 海舟'], [20, '久保 建英'], [8, '鈴木 唯人'], [6, '田中 聡'], [28, '佐野 航大'],
+    ];
+    const players = sample.map(([number, name]) => ({ id: uid(), number: String(number), name }));
+    return { formation: '3-4-2-1', players, lineup: players.slice(0, 11).map((p) => p.id) };
+  }
+
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      if (!s || !Array.isArray(s.players)) return null;
+      if (!FORMATIONS[s.formation]) s.formation = '4-4-2';
+      const ids = new Set(s.players.map((p) => p.id));
+      const lineup = Array.isArray(s.lineup) ? s.lineup : [];
+      s.lineup = Array.from({ length: 11 }, (_, i) => (ids.has(lineup[i]) ? lineup[i] : null));
+      return s;
+    } catch { return null; }
+  }
+
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* 保存できない環境では無視 */ }
+  }
+
+  const state = load() || defaultState();
+  const playerById = (id) => state.players.find((p) => p.id === id);
+  const numKey = (p) => (p.number === '' || isNaN(+p.number) ? 9999 : +p.number);
+  const benchPlayers = () =>
+    state.players.filter((p) => !state.lineup.includes(p.id)).sort((a, b) => numKey(a) - numKey(b));
+
+  // ---------- レイアウト ----------
+  let landscape = true;
+  let courtOnly = false;
+
+  function layout() {
+    const r = mainEl.getBoundingClientRect();
+    landscape = r.width > r.height;
+    mainEl.classList.toggle('portrait', !landscape);
+    let cw;
+    if (courtOnly) {
+      // コートのみ: ピッチ = 画面全体
+      cw = Math.floor(r.width * (landscape ? CARD_RATIO_LANDSCAPE : CARD_RATIO_PORTRAIT));
+    } else if (landscape) {
+      // 控え列の幅 = カード幅 + 余白、カード幅 = ピッチ幅 × 比率
+      const pitchW = (r.width - BENCH_PAD * 2) / (1 + CARD_RATIO_LANDSCAPE);
+      cw = Math.floor(pitchW * CARD_RATIO_LANDSCAPE);
+      benchEl.style.width = Math.max(cw, BENCH_MIN_W) + BENCH_PAD * 2 + 'px';
+      benchEl.style.height = '';
+    } else {
+      cw = Math.floor(r.width * CARD_RATIO_PORTRAIT);
+      const cols = Math.max(1, Math.floor((r.width - BENCH_PAD * 2 + GAP_X) / (cw + GAP_X)));
+      const rows = Math.max(2, Math.ceil(benchPlayers().length / cols));
+      const ctrlH = $('#controls').offsetHeight + 12;
+      const h = BENCH_PAD * 2 + ctrlH + BENCH_HEAD + rows * (cw / CARD_ASPECT) + (rows - 1) * GAP_Y + 1;
+      benchEl.style.height = Math.min(h, r.height * 0.4) + 'px';
+      benchEl.style.width = '';
+    }
+    root.style.setProperty('--cw', cw + 'px');
+    root.style.setProperty('--ch', cw / CARD_ASPECT + 'px');
+    return cw;
+  }
+
+  // ピッチを「縦向き座標（幅pw × 長さpl、上が相手ゴール）」で描き、横向きなら90°回転
+  function drawPitch() {
+    const W = pitchEl.clientWidth, H = pitchEl.clientHeight;
+    const pw = landscape ? H : W, pl = landscape ? W : H;
+    const m = Math.min(pw, pl) * 0.035;
+    const fw = pw - m * 2, fl = pl - m * 2;
+    const sx = fw / 68, sy = fl / 105, s = Math.min(sx, sy);
+    const cx = m + fw / 2, cy = m + fl / 2;
+    const lw = Math.max(1.5, s * 0.16);
+
+    let g = '';
+    const bands = 12;
+    for (let i = 0; i < bands; i++) {
+      g += `<rect x="0" y="${(pl / bands) * i}" width="${pw}" height="${pl / bands + 0.5}" fill="${i % 2 ? '#2b7236' : '#2f7a3b'}"/>`;
+    }
+    const L = `fill="none" stroke="rgba(255,255,255,.78)" stroke-width="${lw}"`;
+    g += `<g ${L}>`;
+    g += `<rect x="${m}" y="${m}" width="${fw}" height="${fl}"/>`;
+    g += `<line x1="${m}" y1="${cy}" x2="${m + fw}" y2="${cy}"/>`;
+    g += `<circle cx="${cx}" cy="${cy}" r="${9.15 * s}"/>`;
+    const bw = 40.32 * sx, bd = 16.5 * sy, gw = 18.32 * sx, gd = 5.5 * sy, spot = 11 * sy;
+    const goalW = 7.32 * sx, goalD = m * 0.7;
+    // 上側（相手ゴール）
+    g += `<rect x="${cx - bw / 2}" y="${m}" width="${bw}" height="${bd}"/>`;
+    g += `<rect x="${cx - gw / 2}" y="${m}" width="${gw}" height="${gd}"/>`;
+    g += `<rect x="${cx - goalW / 2}" y="${m - goalD}" width="${goalW}" height="${goalD}"/>`;
+    g += `<circle cx="${cx}" cy="${m + spot}" r="${9.15 * s}" clip-path="url(#clipTop)"/>`;
+    // 下側（自陣ゴール）
+    g += `<rect x="${cx - bw / 2}" y="${m + fl - bd}" width="${bw}" height="${bd}"/>`;
+    g += `<rect x="${cx - gw / 2}" y="${m + fl - gd}" width="${gw}" height="${gd}"/>`;
+    g += `<rect x="${cx - goalW / 2}" y="${m + fl}" width="${goalW}" height="${goalD}"/>`;
+    g += `<circle cx="${cx}" cy="${m + fl - spot}" r="${9.15 * s}" clip-path="url(#clipBottom)"/>`;
+    // コーナーアーク
+    for (const [x, y] of [[m, m], [m + fw, m], [m, m + fl], [m + fw, m + fl]]) {
+      g += `<circle cx="${x}" cy="${y}" r="${1.2 * s}" clip-path="url(#clipField)"/>`;
+    }
+    g += `</g><g fill="rgba(255,255,255,.78)">`;
+    g += `<circle cx="${cx}" cy="${cy}" r="${lw * 1.4}"/>`;
+    g += `<circle cx="${cx}" cy="${m + spot}" r="${lw * 1.4}"/>`;
+    g += `<circle cx="${cx}" cy="${m + fl - spot}" r="${lw * 1.4}"/>`;
+    g += `</g>`;
+
+    const defs = `<defs>
+      <clipPath id="clipTop" clipPathUnits="userSpaceOnUse"><rect x="0" y="${m + bd}" width="${pw}" height="${pl}"/></clipPath>
+      <clipPath id="clipBottom" clipPathUnits="userSpaceOnUse"><rect x="0" y="0" width="${pw}" height="${m + fl - bd}"/></clipPath>
+      <clipPath id="clipField" clipPathUnits="userSpaceOnUse"><rect x="${m}" y="${m}" width="${fw}" height="${fl}"/></clipPath>
+      <radialGradient id="vig" cx="50%" cy="50%" r="75%"><stop offset="60%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity=".28"/></radialGradient>
+    </defs>`;
+    const t = landscape ? `translate(${W},0) rotate(90)` : '';
+    svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svgEl.innerHTML = `${defs}<g transform="${t}">${g}</g><rect width="${W}" height="${H}" fill="url(#vig)"/>`;
+  }
+
+  // 正規化座標(x,y) → ピッチ内のピクセル位置
+  function slotPos(x, y, cw) {
+    const W = pitchEl.clientWidth, H = pitchEl.clientHeight, ch = cw / CARD_ASPECT;
+    if (landscape) {
+      const ax = ch / 2 + H * 0.06, ay = cw / 2 + 10;
+      return { left: ay + (y / 100) * (W - ay * 2), top: ax + (x / 100) * (H - ax * 2) };
+    }
+    const ax = cw / 2 + 6, ay = ch / 2 + H * 0.045;
+    return { left: ax + (x / 100) * (W - ax * 2), top: H - (ay + (y / 100) * (H - ay * 2)) };
+  }
+
+  // ---------- 描画 ----------
+  function makeCard(p) {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.dataset.pid = p.id;
+    const num = document.createElement('div');
+    num.className = 'num';
+    num.appendChild(document.createElement('span')).textContent = p.number;
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.appendChild(document.createElement('span')).textContent = p.name;
+    el.append(num, name);
+    return el;
+  }
+
+  // 文字幅が枠の90%を超える場合、横方向だけ縮める
+  function fitText(span) {
+    span.style.transform = '';
+    const box = span.parentElement.clientWidth * NAME_FIT;
+    const w = span.getBoundingClientRect().width;
+    if (w > box && w > 0) span.style.transform = `scaleX(${box / w})`;
+  }
+
+  function render() {
+    const cw = layout();
+    drawPitch();
+
+    slotsEl.textContent = '';
+    FORMATIONS[state.formation].forEach(([label, x, y], i) => {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.dataset.drop = 'slot';
+      slot.dataset.slot = i;
+      const { left, top } = slotPos(x, y, cw);
+      slot.style.left = left + 'px';
+      slot.style.top = top + 'px';
+      const p = playerById(state.lineup[i]);
+      if (p) {
+        slot.appendChild(makeCard(p));
+      } else {
+        const ph = document.createElement('div');
+        ph.className = 'ph';
+        ph.textContent = label;
+        slot.appendChild(ph);
+      }
+      slotsEl.appendChild(slot);
+    });
+
+    const bench = benchPlayers();
+    benchCount.textContent = bench.length;
+    benchList.textContent = '';
+    for (const p of bench) {
+      const c = makeCard(p);
+      c.dataset.drop = 'benchPlayer';
+      benchList.appendChild(c);
+    }
+    if (!bench.length) {
+      const e = document.createElement('div');
+      e.className = 'bench-empty';
+      e.textContent = '控えなし';
+      benchList.appendChild(e);
+    }
+
+    document.querySelectorAll('.card .num span, .card .name span').forEach(fitText);
+    applySelection();
+  }
+
+  // ---------- 移動ロジック ----------
+  // src: {type:'slot', i, pid} | {type:'bench', pid}
+  // tgt: {type:'slot', i} | {type:'benchPlayer', pid} | {type:'bench'}
+  function srcOf(card) {
+    const slot = card.closest('.slot');
+    return slot ? { type: 'slot', i: +slot.dataset.slot, pid: card.dataset.pid } : { type: 'bench', pid: card.dataset.pid };
+  }
+
+  function targetOf(el) {
+    const d = el && el.closest('[data-drop]');
+    if (!d) return null;
+    if (d.dataset.drop === 'slot') return { type: 'slot', i: +d.dataset.slot, el: d };
+    if (d.dataset.drop === 'benchPlayer') return { type: 'benchPlayer', pid: d.dataset.pid, el: d };
+    return { type: 'bench', el: d };
+  }
+
+  const sameSrc = (a, b) => a && b && a.type === b.type && (a.type === 'slot' ? a.i === b.i : a.pid === b.pid);
+
+  function applyMove(src, tgt) {
+    const L = state.lineup;
+    let changed = false;
+    if (src.type === 'slot') {
+      if (tgt.type === 'slot' && tgt.i !== src.i) {
+        [L[src.i], L[tgt.i]] = [L[tgt.i], L[src.i]]; changed = true;
+      } else if (tgt.type === 'benchPlayer') {
+        L[src.i] = tgt.pid; changed = true; // 控えと入れ替え
+      } else if (tgt.type === 'bench') {
+        L[src.i] = null; changed = true;    // 控えへ下げる
+      }
+    } else if (tgt.type === 'slot') {
+      L[tgt.i] = src.pid; changed = true;   // 控えから投入（元の選手は控えへ）
+    }
+    if (changed) { save(); render(); }
+  }
+
+  // ---------- タップ選択 ----------
+  let selected = null;
+
+  function applySelection() {
+    document.querySelectorAll('.card.selected').forEach((c) => c.classList.remove('selected'));
+    document.body.classList.toggle('has-selection', !!selected);
+    document.body.classList.toggle('sel-slot', selected?.type === 'slot');
+    if (!selected) return;
+    const card = selected.type === 'slot'
+      ? slotsEl.querySelector(`.slot[data-slot="${selected.i}"] .card`)
+      : benchList.querySelector(`.card[data-pid="${selected.pid}"]`);
+    if (card) card.classList.add('selected'); else selected = null;
+  }
+
+  function select(src) { selected = src; applySelection(); }
+
+  function handleTap(el) {
+    const card = el.closest('.card');
+    const tgt = targetOf(el);
+    if (!selected) { if (card) select(srcOf(card)); return; }
+    if (card && sameSrc(srcOf(card), selected)) { select(null); return; }
+    if (selected.type === 'bench' && tgt?.type === 'benchPlayer') { select(srcOf(card)); return; }
+    const src = selected;
+    select(null);
+    if (tgt) applyMove(src, tgt);
+  }
+
+  // ---------- ドラッグ&ドロップ（Pointer Events: iPadのタッチ対応） ----------
+  let press = null, drag = null;
+
+  function setHover(tgt) {
+    const el = tgt && !(drag && tgt.type === 'slot' && drag.src.type === 'slot' && tgt.i === drag.src.i) ? tgt.el : null;
+    if (drag.hoverEl === el) return;
+    drag.hoverEl?.classList.remove('drop-hover');
+    el?.classList.add('drop-hover');
+    drag.hoverEl = el;
+  }
+
+  function endDrag() {
+    drag.ghost.remove();
+    drag.card.classList.remove('dragging');
+    drag.hoverEl?.classList.remove('drop-hover');
+    drag = null;
+  }
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary || e.target.closest('.modal, .controls, .fs-exit')) return;
+    const card = e.target.closest('.card');
+    press = { x: e.clientX, y: e.clientY, card };
+  });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!press) return;
+    if (!drag) {
+      if (!press.card || Math.hypot(e.clientX - press.x, e.clientY - press.y) < 8) return;
+      select(null);
+      const ghost = press.card.cloneNode(true);
+      ghost.classList.add('ghost');
+      ghost.classList.remove('selected');
+      document.body.appendChild(ghost);
+      press.card.classList.add('dragging');
+      drag = { src: srcOf(press.card), card: press.card, ghost, hoverEl: null };
+    }
+    drag.ghost.style.left = e.clientX + 'px';
+    drag.ghost.style.top = e.clientY + 'px';
+    setHover(targetOf(document.elementFromPoint(e.clientX, e.clientY)));
+  });
+
+  document.addEventListener('pointerup', (e) => {
+    if (!press) return;
+    if (drag) {
+      const src = drag.src;
+      const tgt = targetOf(document.elementFromPoint(e.clientX, e.clientY));
+      endDrag();
+      if (tgt) applyMove(src, tgt);
+    } else {
+      handleTap(e.target);
+    }
+    press = null;
+  });
+
+  document.addEventListener('pointercancel', () => {
+    if (drag) endDrag();
+    press = null;
+  });
+
+  // ---------- フォーメーション ----------
+  for (const k of Object.keys(FORMATIONS)) formationSel.add(new Option(k, k));
+  formationSel.value = state.formation;
+  formationSel.addEventListener('change', () => {
+    state.formation = formationSel.value;
+    select(null);
+    save(); render();
+  });
+
+  // ---------- 選手管理 ----------
+  function rosterRow(p) {
+    const row = document.createElement('div');
+    row.className = 'r-row';
+    row.dataset.pid = p.id;
+    row.innerHTML = `<input class="r-num" inputmode="numeric" maxlength="3" placeholder="-">
+      <input class="r-name" placeholder="選手名">
+      <span class="r-status"></span>
+      <button class="danger r-del">削除</button>`;
+    row.querySelector('.r-num').value = p.number;
+    row.querySelector('.r-name').value = p.name;
+    updateStatus(row);
+    return row;
+  }
+
+  function updateStatus(row) {
+    const on = state.lineup.includes(row.dataset.pid);
+    const st = row.querySelector('.r-status');
+    st.textContent = on ? 'スタメン' : '控え';
+    st.classList.toggle('on', on);
+  }
+
+  function openRoster() {
+    select(null);
+    rosterList.textContent = '';
+    [...state.players].sort((a, b) => numKey(a) - numKey(b)).forEach((p) => rosterList.appendChild(rosterRow(p)));
+    modal.hidden = false;
+  }
+
+  rosterList.addEventListener('input', (e) => {
+    const row = e.target.closest('.r-row');
+    const p = row && playerById(row.dataset.pid);
+    if (!p) return;
+    if (e.target.classList.contains('r-num')) {
+      e.target.value = e.target.value.replace(/[^0-9]/g, '');
+      p.number = e.target.value;
+    } else if (e.target.classList.contains('r-name')) {
+      p.name = e.target.value;
+    }
+    save(); render();
+  });
+
+  rosterList.addEventListener('click', (e) => {
+    if (!e.target.classList.contains('r-del')) return;
+    const row = e.target.closest('.r-row');
+    const p = playerById(row.dataset.pid);
+    if (!p || !confirm(`「${p.name || '（名前なし）'}」を削除しますか？`)) return;
+    state.players = state.players.filter((x) => x.id !== p.id);
+    state.lineup = state.lineup.map((id) => (id === p.id ? null : id));
+    row.remove();
+    save(); render();
+  });
+
+  $('#rosterAdd').addEventListener('click', () => {
+    const p = { id: uid(), number: '', name: '' };
+    state.players.push(p);
+    const row = rosterRow(p);
+    rosterList.appendChild(row);
+    row.scrollIntoView({ block: 'nearest' });
+    row.querySelector('.r-num').focus();
+    save(); render();
+  });
+
+  $('#btnRoster').addEventListener('click', openRoster);
+
+  // ---------- コートのみ全画面 ----------
+  // 控えを隠してピッチを画面いっぱいに。対応ブラウザではブラウザ自体も全画面にする
+  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+
+  function setCourtOnly(on) {
+    courtOnly = on;
+    document.body.classList.toggle('court-only', on);
+    select(null);
+    const el = document.documentElement;
+    try {
+      if (on && !fsElement()) (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)?.catch?.(() => {});
+      if (!on && fsElement()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
+    } catch { /* 全画面API非対応でもコートのみ表示は有効 */ }
+    render();
+  }
+
+  function onFullscreenChange() {
+    if (!fsElement() && courtOnly) setCourtOnly(false); // Escなどで全画面が解除されたら戻す
+    else scheduleRender();
+  }
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+  $('#btnFull').addEventListener('click', () => setCourtOnly(true));
+  $('#btnExitFull').addEventListener('click', () => setCourtOnly(false));
+  $('#rosterDone').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+
+  // ---------- 起動 ----------
+  let raf = 0;
+  const scheduleRender = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); };
+  window.addEventListener('resize', scheduleRender);
+  window.addEventListener('orientationchange', scheduleRender);
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+  render();
+  document.fonts?.ready.then(render); // フォント読込後に文字幅を測り直す
+
+  // オフライン対応（http/httpsで開いたときのみ）
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
