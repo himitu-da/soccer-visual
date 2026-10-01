@@ -42,9 +42,10 @@
   /* ---------- 操作ボタン（控えエリアの上） ---------- */
   .controls {
     flex: none; margin-bottom: 12px;
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
   }
   #main.portrait .controls { grid-template-columns: repeat(4, auto); justify-content: end; }
+  #bench.wide .controls { grid-template-columns: repeat(4, auto); justify-content: start; }
   .controls select, .controls button, .fs-exit {
     font: inherit; font-size: 13px; color: #fff;
     background: rgba(255,255,255,.1);
@@ -85,7 +86,7 @@
     display: flex;
     width: var(--cw); height: var(--ch);
     background: #fff; color: #000;
-    font-size: calc(var(--ch) * .6);
+    font-size: calc(var(--ch) * .5);
     line-height: 1;
     white-space: nowrap;
     touch-action: none;
@@ -93,15 +94,19 @@
     box-shadow: 0 1px 3px rgba(0,0,0,.35);
   }
   .card .num {
-    flex: none; width: var(--ch); /* 背番号エリア = 横1/6 = 高さと同じ */
+    flex: none; width: calc(var(--ch) * .8);
     display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-variant-numeric: tabular-nums;
+    background: #12325c; color: #fff;
+    font-size: .95em; font-weight: 700; font-variant-numeric: tabular-nums;
   }
   .card .name {
     flex: 1; min-width: 0;
-    display: flex; align-items: center; justify-content: center;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
     font-weight: 500;
   }
+  /* 姓（上段・大きく）と名（下段・小さく） */
+  .card .name .fam { font-size: 1.05em; font-weight: 700; }
+  .card .name .giv { font-size: .74em; color: #333; }
   .card .num span, .card .name span { display: inline-block; transform-origin: center; }
   .card.selected {
     outline: 3px solid var(--accent); outline-offset: 1px;
@@ -127,7 +132,7 @@
     border: 1.5px dashed rgba(255,255,255,.75);
     background: rgba(0,0,0,.18);
     color: rgba(255,255,255,.9);
-    font-size: calc(var(--ch) * .5); font-weight: 700; letter-spacing: .08em;
+    font-size: calc(var(--ch) * .4); font-weight: 700; letter-spacing: .08em;
   }
 
   /* 選択中・ドラッグ中の移動先ヒント */
@@ -237,11 +242,12 @@
   'use strict';
 
   const STORAGE_KEY = 'soccerVisual.v2';
-  const CARD_RATIO_LANDSCAPE = 0.16; // 横向き時: カード幅 = ピッチ幅 × この値
-  const CARD_RATIO_PORTRAIT = 0.19;  // 縦向き時: カード幅 = ピッチ幅 × この値
+  const CARD_RATIO_LANDSCAPE = 0.13;  // 横向き時: カード幅 = ピッチ幅 × この値
+  const CARD_RATIO_PORTRAIT = 0.155; // 縦向き時: カード幅 = ピッチ幅 × この値
   const NAME_FIT = 0.9;              // 名前が枠のこの割合を超えたら横に縮める
-  const CARD_ASPECT = 6;             // カード比率 縦1：横6（うち横1が背番号）
+  const CARD_ASPECT = 2.6;           // カード比率 縦1：横2.6（左に背番号、右に姓名2段）
   const BENCH_PAD = 10, BENCH_HEAD = 26, BENCH_MIN_W = 170, GAP_X = 8, GAP_Y = 6;
+  const BENCH_COLS = 2;              // 横画面での控えの列数
   const FIELD_ASPECT = 0.9;          // 画面と逆向きの芝にするとき: ピッチ幅 ≦ 長さ × この値
   const PITCH_DIRS = { auto: '芝 自動', v: '芝 縦', h: '芝 横' };
 
@@ -331,6 +337,7 @@
     landscape = r.width > r.height;
     horiz = state.pitchDir === 'auto' ? landscape : state.pitchDir === 'h';
     mainEl.classList.toggle('portrait', !landscape);
+    benchEl.classList.remove('wide');
     pitchDirBtn.textContent = PITCH_DIRS[state.pitchDir];
     let cw;
     if (courtOnly) {
@@ -340,10 +347,11 @@
       // 控え列の幅 = カード幅 + 余白
       let benchW;
       if (horiz) {
-        // カード幅 = ピッチ幅 × 比率
-        const pitchW = (r.width - BENCH_PAD * 2) / (1 + CARD_RATIO_LANDSCAPE);
+        // カード幅 = ピッチ幅 × 比率、控えはカードを BENCH_COLS 列並べる幅
+        const gaps = GAP_X * (BENCH_COLS - 1) + 2; // +2: 左の枠線と端数の余裕
+        const pitchW = (r.width - BENCH_PAD * 2 - gaps) / (1 + CARD_RATIO_LANDSCAPE * BENCH_COLS);
         cw = Math.floor(pitchW * CARD_RATIO_LANDSCAPE);
-        benchW = Math.max(cw, BENCH_MIN_W) + BENCH_PAD * 2;
+        benchW = Math.max(cw * BENCH_COLS + gaps, BENCH_MIN_W) + BENCH_PAD * 2;
       } else {
         // 縦向きの芝: コートは高さに合わせた幅にし、残りの横幅はすべて控えに使う
         const pitchW = Math.floor(Math.min(r.height * FIELD_ASPECT, r.width - BENCH_MIN_W - BENCH_PAD * 2,
@@ -352,6 +360,7 @@
         benchW = r.width - pitchW;
       }
       benchEl.style.width = benchW + 'px';
+      benchEl.classList.toggle('wide', benchW > 400); // 控えが広いときは操作ボタンを1行に
       benchEl.style.height = '';
     } else {
       cw = cardWidth(r.width, r.height);
@@ -445,7 +454,16 @@
     num.appendChild(document.createElement('span')).textContent = p.number;
     const name = document.createElement('div');
     name.className = 'name';
-    name.appendChild(document.createElement('span')).textContent = p.name;
+    // 「姓 名」を空白で分けて2段に（空白がなければ1段）
+    const [fam, ...giv] = p.name.trim().split(/[\s　]+/);
+    const f = name.appendChild(document.createElement('span'));
+    f.className = 'fam';
+    f.textContent = fam;
+    if (giv.length) {
+      const g = name.appendChild(document.createElement('span'));
+      g.className = 'giv';
+      g.textContent = giv.join(' ');
+    }
     el.append(num, name);
     return el;
   }

@@ -3,7 +3,7 @@
 // アプリ本体はネットワーク優先（HTTPキャッシュも迂回）で常に最新版を表示し、
 // 通信できない・遅いときだけキャッシュを使う。フォントはキャッシュ優先。
 // ※ アプリを更新したら CACHE の番号を上げる（開いたままのiPadにも更新が届く）
-const CACHE = 'soccer-visual-v3';
+const CACHE = 'soccer-visual-v4';
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 const NETWORK_TIMEOUT_MS = 3000;
 
