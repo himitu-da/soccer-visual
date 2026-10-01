@@ -42,11 +42,9 @@
   /* ---------- 操作ボタン（控えエリアの上） ---------- */
   .controls {
     flex: none; margin-bottom: 12px;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px;
   }
-  .controls select { grid-column: 1 / -1; }
-  #main.portrait .controls { grid-template-columns: auto auto auto; justify-content: end; }
-  #main.portrait .controls select { grid-column: auto; }
+  #main.portrait .controls { grid-template-columns: repeat(4, auto); justify-content: end; }
   .controls select, .controls button, .fs-exit {
     font: inherit; font-size: 13px; color: #fff;
     background: rgba(255,255,255,.1);
@@ -55,9 +53,9 @@
     height: 34px; padding: 0 10px; min-width: 0;
     white-space: nowrap;
   }
-  .controls select { -webkit-appearance: none; appearance: none; padding-right: 26px;
+  .controls select { -webkit-appearance: none; appearance: none; padding: 0 20px 0 8px;
     background-image: linear-gradient(45deg, transparent 50%, #fff 50%), linear-gradient(135deg, #fff 50%, transparent 50%);
-    background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px;
+    background-position: calc(100% - 13px) 15px, calc(100% - 8px) 15px;
     background-size: 5px 5px; background-repeat: no-repeat; }
   .controls button:active, .fs-exit:active { background: rgba(255,255,255,.25); }
 
@@ -213,6 +211,7 @@
     <section id="bench" data-drop="bench">
       <div class="controls" id="controls">
         <select id="formation" aria-label="フォーメーション"></select>
+        <button id="btnPitchDir" aria-label="芝の向き（自動→縦→横）"></button>
         <button id="btnRoster">選手管理</button>
         <button id="btnFull">全画面</button>
       </div>
@@ -242,7 +241,9 @@
   const CARD_RATIO_PORTRAIT = 0.19;  // 縦向き時: カード幅 = ピッチ幅 × この値
   const NAME_FIT = 0.9;              // 名前が枠のこの割合を超えたら横に縮める
   const CARD_ASPECT = 6;             // カード比率 縦1：横6（うち横1が背番号）
-  const BENCH_PAD = 10, BENCH_HEAD = 26, BENCH_MIN_W = 150, GAP_X = 8, GAP_Y = 6;
+  const BENCH_PAD = 10, BENCH_HEAD = 26, BENCH_MIN_W = 170, GAP_X = 8, GAP_Y = 6;
+  const FIELD_ASPECT = 0.9;          // 画面と逆向きの芝にするとき: ピッチ幅 ≦ 長さ × この値
+  const PITCH_DIRS = { auto: '芝 自動', v: '芝 縦', h: '芝 横' };
 
   // ポジション定義: [ラベル, x(左0→右100), y(自陣ゴール0→相手ゴール100)]
   const DF4 = [['LB', 0, 24], ['CB', 33, 20], ['CB', 67, 20], ['RB', 100, 24]];
@@ -263,7 +264,7 @@
   const root = document.documentElement;
   const mainEl = $('#main'), pitchEl = $('#pitch'), svgEl = $('#pitchSvg'), slotsEl = $('#slots');
   const benchEl = $('#bench'), benchList = $('#benchList'), benchCount = $('#benchCount');
-  const formationSel = $('#formation');
+  const formationSel = $('#formation'), pitchDirBtn = $('#btnPitchDir');
   const modal = $('#rosterModal'), rosterList = $('#rosterList');
 
   const uid = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -283,7 +284,7 @@
       [24, '佐野 海舟'], [20, '久保 建英'], [8, '鈴木 唯人'], [6, '田中 聡'], [28, '佐野 航大'],
     ];
     const players = sample.map(([number, name]) => ({ id: uid(), number: String(number), name }));
-    return { formation: '3-4-2-1', players, lineup: players.slice(0, 11).map((p) => p.id) };
+    return { formation: '3-4-2-1', pitchDir: 'auto', players, lineup: players.slice(0, 11).map((p) => p.id) };
   }
 
   function load() {
@@ -291,6 +292,7 @@
       const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
       if (!s || !Array.isArray(s.players)) return null;
       if (!FORMATIONS[s.formation]) s.formation = '4-4-2';
+      if (!PITCH_DIRS[s.pitchDir]) s.pitchDir = 'auto';
       const ids = new Set(s.players.map((p) => p.id));
       const lineup = Array.isArray(s.lineup) ? s.lineup : [];
       s.lineup = Array.from({ length: 11 }, (_, i) => (ids.has(lineup[i]) ? lineup[i] : null));
@@ -309,30 +311,58 @@
     state.players.filter((p) => !state.lineup.includes(p.id)).sort((a, b) => numKey(a) - numKey(b));
 
   // ---------- レイアウト ----------
-  let landscape = true;
+  let landscape = true; // 画面の向き（控えの配置）
+  let horiz = true;     // 芝の向き（true = 横長、左が自陣ゴール）
   let courtOnly = false;
+
+  // ピッチ要素(W×H)内でコートを描く範囲。画面と逆向きの芝は細長くならないよう中央に収める
+  function fieldBox(W, H) {
+    if (horiz === landscape) return { x: 0, y: 0, w: W, h: H };
+    if (horiz) { const h = Math.min(H, W * FIELD_ASPECT); return { x: 0, y: (H - h) / 2, w: W, h }; }
+    const w = Math.min(W, H * FIELD_ASPECT);
+    return { x: (W - w) / 2, y: 0, w, h: H };
+  }
+
+  // カード幅: 横向きの芝はコートの長さ × 比率、縦向きの芝はコートの幅 × 比率
+  const cardWidth = (W, H) => Math.floor(fieldBox(W, H).w * (horiz ? CARD_RATIO_LANDSCAPE : CARD_RATIO_PORTRAIT));
 
   function layout() {
     const r = mainEl.getBoundingClientRect();
     landscape = r.width > r.height;
+    horiz = state.pitchDir === 'auto' ? landscape : state.pitchDir === 'h';
     mainEl.classList.toggle('portrait', !landscape);
+    pitchDirBtn.textContent = PITCH_DIRS[state.pitchDir];
     let cw;
     if (courtOnly) {
       // コートのみ: ピッチ = 画面全体
-      cw = Math.floor(r.width * (landscape ? CARD_RATIO_LANDSCAPE : CARD_RATIO_PORTRAIT));
+      cw = cardWidth(r.width, r.height);
     } else if (landscape) {
-      // 控え列の幅 = カード幅 + 余白、カード幅 = ピッチ幅 × 比率
-      const pitchW = (r.width - BENCH_PAD * 2) / (1 + CARD_RATIO_LANDSCAPE);
-      cw = Math.floor(pitchW * CARD_RATIO_LANDSCAPE);
-      benchEl.style.width = Math.max(cw, BENCH_MIN_W) + BENCH_PAD * 2 + 'px';
+      // 控え列の幅 = カード幅 + 余白
+      let benchW;
+      if (horiz) {
+        // カード幅 = ピッチ幅 × 比率
+        const pitchW = (r.width - BENCH_PAD * 2) / (1 + CARD_RATIO_LANDSCAPE);
+        cw = Math.floor(pitchW * CARD_RATIO_LANDSCAPE);
+        benchW = Math.max(cw, BENCH_MIN_W) + BENCH_PAD * 2;
+      } else {
+        // 縦向きの芝: コートは高さに合わせた幅にし、残りの横幅はすべて控えに使う
+        const pitchW = Math.floor(Math.min(r.height * FIELD_ASPECT, r.width - BENCH_MIN_W - BENCH_PAD * 2,
+          (r.width - BENCH_PAD * 2) / (1 + CARD_RATIO_PORTRAIT)));
+        cw = Math.floor(pitchW * CARD_RATIO_PORTRAIT);
+        benchW = r.width - pitchW;
+      }
+      benchEl.style.width = benchW + 'px';
       benchEl.style.height = '';
     } else {
-      cw = Math.floor(r.width * CARD_RATIO_PORTRAIT);
+      cw = cardWidth(r.width, r.height);
       const cols = Math.max(1, Math.floor((r.width - BENCH_PAD * 2 + GAP_X) / (cw + GAP_X)));
       const rows = Math.max(2, Math.ceil(benchPlayers().length / cols));
       const ctrlH = $('#controls').offsetHeight + 12;
       const h = BENCH_PAD * 2 + ctrlH + BENCH_HEAD + rows * (cw / CARD_ASPECT) + (rows - 1) * GAP_Y + 1;
-      benchEl.style.height = Math.min(h, r.height * 0.4) + 'px';
+      let benchH = Math.min(h, r.height * 0.4);
+      // 横向きの芝: コートは横幅に合わせた高さにし、残りの高さはすべて控えに使う
+      if (horiz) benchH = Math.max(benchH, r.height - Math.floor(r.width * FIELD_ASPECT));
+      benchEl.style.height = benchH + 'px';
       benchEl.style.width = '';
     }
     root.style.setProperty('--cw', cw + 'px');
@@ -343,7 +373,8 @@
   // ピッチを「縦向き座標（幅pw × 長さpl、上が相手ゴール）」で描き、横向きなら90°回転
   function drawPitch() {
     const W = pitchEl.clientWidth, H = pitchEl.clientHeight;
-    const pw = landscape ? H : W, pl = landscape ? W : H;
+    const f = fieldBox(W, H);
+    const pw = horiz ? f.h : f.w, pl = horiz ? f.w : f.h;
     const m = Math.min(pw, pl) * 0.035;
     const fw = pw - m * 2, fl = pl - m * 2;
     const sx = fw / 68, sy = fl / 105, s = Math.min(sx, sy);
@@ -388,20 +419,20 @@
       <clipPath id="clipField" clipPathUnits="userSpaceOnUse"><rect x="${m}" y="${m}" width="${fw}" height="${fl}"/></clipPath>
       <radialGradient id="vig" cx="50%" cy="50%" r="75%"><stop offset="60%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity=".28"/></radialGradient>
     </defs>`;
-    const t = landscape ? `translate(${W},0) rotate(90)` : '';
+    const t = horiz ? `translate(${f.x + f.w},${f.y}) rotate(90)` : `translate(${f.x},${f.y})`;
     svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    svgEl.innerHTML = `${defs}<g transform="${t}">${g}</g><rect width="${W}" height="${H}" fill="url(#vig)"/>`;
+    svgEl.innerHTML = `${defs}<rect width="${W}" height="${H}" fill="#286b33"/><g transform="${t}">${g}</g><rect width="${W}" height="${H}" fill="url(#vig)"/>`;
   }
 
   // 正規化座標(x,y) → ピッチ内のピクセル位置
   function slotPos(x, y, cw) {
-    const W = pitchEl.clientWidth, H = pitchEl.clientHeight, ch = cw / CARD_ASPECT;
-    if (landscape) {
-      const ax = ch / 2 + H * 0.06, ay = cw / 2 + 10;
-      return { left: ay + (y / 100) * (W - ay * 2), top: ax + (x / 100) * (H - ax * 2) };
+    const f = fieldBox(pitchEl.clientWidth, pitchEl.clientHeight), ch = cw / CARD_ASPECT;
+    if (horiz) {
+      const ax = ch / 2 + f.h * 0.06, ay = cw / 2 + 10;
+      return { left: f.x + ay + (y / 100) * (f.w - ay * 2), top: f.y + ax + (x / 100) * (f.h - ax * 2) };
     }
-    const ax = cw / 2 + 6, ay = ch / 2 + H * 0.045;
-    return { left: ax + (x / 100) * (W - ax * 2), top: H - (ay + (y / 100) * (H - ay * 2)) };
+    const ax = cw / 2 + 6, ay = ch / 2 + f.h * 0.045;
+    return { left: f.x + ax + (x / 100) * (f.w - ax * 2), top: f.y + f.h - (ay + (y / 100) * (f.h - ay * 2)) };
   }
 
   // ---------- 描画 ----------
@@ -646,6 +677,15 @@
     save(); render(); animateFrom(before);
   });
 
+  // ---------- 芝の向き（自動 → 縦 → 横） ----------
+  pitchDirBtn.addEventListener('click', () => {
+    const dirs = Object.keys(PITCH_DIRS);
+    state.pitchDir = dirs[(dirs.indexOf(state.pitchDir) + 1) % dirs.length];
+    select(null);
+    const before = snapshot();
+    save(); render(); animateFrom(before);
+  });
+
   // ---------- 選手管理 ----------
   function rosterRow(p) {
     const row = document.createElement('div');
@@ -750,7 +790,21 @@
 
   // オフライン対応（http/httpsで開いたときのみ）
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    // updateViaCache:'none' … sw.js 自体をHTTPキャッシュから読まない
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      // iPadのホーム画面アプリは再起動されにくいので、画面に戻るたびに更新を確認する
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    }).catch(() => {});
+    // 新しいバージョンが有効になったら再読み込みして反映（初回インストール時は除く）
+    let reloading = false;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading || drag) return;
+      reloading = true;
+      location.reload();
+    });
   }
 })();
 </script>
